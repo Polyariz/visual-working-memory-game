@@ -230,11 +230,12 @@ class TaskWidget extends StatefulWidget {
 }
 
 class _TaskWidgetState extends State<TaskWidget> {
-  late Task task;
+  Task? task;
   late TaskParameters taskParams;
   bool isMemorizationPhase = true;
   Set<int> clickedHexagonIds = {};
   bool isCompleted = false;
+  bool isInitialized = false;
 
   @override
   void initState() {
@@ -243,83 +244,91 @@ class _TaskWidgetState extends State<TaskWidget> {
   }
 
   void _startMemorizationPhase() {
-    task = Task(
-      indicesTarget: widget.indicesTarget,
-      ddaMethod: 'rule-base',
-      userInfo: widget.userInfo,
-      numX: 6,
-      numY: 6,
-      showTime: 2,
-      positionInit: Offset.zero, // Будет установлено позже
-      rHexagon: 0, // Будет установлено позже
-      taskNumber: widget.taskNumber,
-    );
+    // Получаем параметры задачи на основе размера экрана
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final screenSize = MediaQuery.of(context).size;
+      taskParams = TaskParameters.fromScreenSize(screenSize);
 
-    task.startShowingTaskTs = DateTime.now();
+      setState(() {
+        task = Task(
+          indicesTarget: widget.indicesTarget,
+          ddaMethod: 'rule-base',
+          userInfo: widget.userInfo,
+          numX: 6,
+          numY: 6,
+          showTime: 2,
+          positionInit: taskParams.positionInit,
+          rHexagon: taskParams.rHexagon,
+          taskNumber: widget.taskNumber,
+        );
 
-    // Фаза запоминания - 2 секунды
-    Timer(const Duration(seconds: 2), () {
-      if (mounted) {
-        setState(() {
-          task.endShowingTaskTs = DateTime.now();
-          task.startAnsweringTs = DateTime.now();
-          isMemorizationPhase = false;
-        });
-      }
+        task!.startShowingTaskTs = DateTime.now();
+      });
+
+      // Фаза запоминания - 2 секунды
+      Timer(const Duration(seconds: 2), () {
+        if (mounted) {
+          setState(() {
+            task!.endShowingTaskTs = DateTime.now();
+            task!.startAnsweringTs = DateTime.now();
+            isMemorizationPhase = false;
+          });
+        }
+      });
     });
   }
 
   void _handleTap(TapDownDetails details) {
-    if (isMemorizationPhase || isCompleted) return;
+    if (isMemorizationPhase || isCompleted || task == null) return;
 
     final localPosition = details.localPosition;
     final currentTime = DateTime.now();
 
-    for (var hexagon in task.hexagons) {
+    for (var hexagon in task!.hexagons) {
       if (hexagon.collideWithPoint(localPosition) &&
           !clickedHexagonIds.contains(hexagon.index)) {
         setState(() {
           // Добавляем время отклика
           if (clickedHexagonIds.isEmpty) {
-            task.sequenceResponseTime.add(
-              currentTime.difference(task.startAnsweringTs!).inMilliseconds /
+            task!.sequenceResponseTime.add(
+              currentTime.difference(task!.startAnsweringTs!).inMilliseconds /
                   1000.0,
             );
           } else {
-            final lastClickTime = task.startAnsweringTs!.add(
+            final lastClickTime = task!.startAnsweringTs!.add(
               Duration(
-                milliseconds: (task.sequenceResponseTime
+                milliseconds: (task!.sequenceResponseTime
                             .reduce((a, b) => a + b) *
                         1000)
                     .toInt(),
               ),
             );
-            task.sequenceResponseTime.add(
+            task!.sequenceResponseTime.add(
               currentTime.difference(lastClickTime).inMilliseconds / 1000.0,
             );
           }
 
           // Добавляем индекс ответа
-          task.indicesAnswer.add(hexagon.index);
+          task!.indicesAnswer.add(hexagon.index);
           clickedHexagonIds.add(hexagon.index);
 
           // Добавляем в последовательность ответов
           if (hexagon.isAnsweredTrue == true) {
-            task.sequenceAnswer.add(1);
+            task!.sequenceAnswer.add(1);
           } else if (hexagon.isAnsweredTrue == false) {
-            task.sequenceAnswer.add(0);
+            task!.sequenceAnswer.add(0);
           }
         });
 
         // Проверяем, завершена ли задача
         if (clickedHexagonIds.length == widget.indicesTarget.length) {
           isCompleted = true;
-          task.endOfTask();
+          task!.endOfTask();
 
           Timer(const Duration(seconds: 2), () {
             if (mounted) {
               Navigator.pop(context);
-              widget.onComplete(task.score!, task.toMap());
+              widget.onComplete(task!.score!, task!.toMap());
             }
           });
         }
@@ -330,11 +339,17 @@ class _TaskWidgetState extends State<TaskWidget> {
 
   @override
   Widget build(BuildContext context) {
-    final screenSize = MediaQuery.of(context).size;
-    taskParams = TaskParameters.fromScreenSize(screenSize);
+    // Если задача еще не инициализирована, показываем индикатор загрузки
+    if (task == null) {
+      return const Scaffold(
+        backgroundColor: Colors.white,
+        body: Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
 
-    // Обновляем параметры задачи
-    task.hexagons = task.createTask(taskParams.rHexagon);
+    final screenSize = MediaQuery.of(context).size;
 
     return Scaffold(
       backgroundColor: Colors.white,
@@ -351,7 +366,7 @@ class _TaskWidgetState extends State<TaskWidget> {
             onTapDown: _handleTap,
             child: CustomPaint(
               painter: HexagonTaskPainter(
-                hexagons: task.hexagons,
+                hexagons: task!.hexagons,
                 isMemorizationPhase: isMemorizationPhase,
               ),
               size: screenSize,
